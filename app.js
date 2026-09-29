@@ -110,7 +110,7 @@ function makeNodeEl(n) {
       <button class="nb" data-act="sibling" aria-label="같은 줄에 추가">−</button>
       <button class="nb" data-act="delete" aria-label="상자 삭제">×</button>
     </div>
-    <div class="rz" aria-label="크기 조절"></div>`;
+    ${['n', 's', 'e', 'w', 'nw', 'ne', 'sw', 'se'].map(h => `<div class="hd hd-${h}" data-h="${h}"></div>`).join('')}`;
   const t = el.querySelector('.txt');
   let shift = false;
   t.addEventListener('keydown', e => {
@@ -171,13 +171,16 @@ function render() {
 function measure() { for (const [id, el] of els) sizes.set(id, { w: el.offsetWidth, h: el.offsetHeight }); }
 
 // ---------- 곡선 화살표 ----------
-function curve(a, b, gap = 7) {
+// pref: 'v' 위아래로 잇기, 'h' 옆으로 잇기 (없으면 더 많이 떨어진 쪽)
+function curve(a, b, gap = 7, pref) {
   const acx = a.x + a.w / 2, acy = a.y + a.h / 2, bcx = b.x + b.w / 2, bcy = b.y + b.h / 2;
+  const gy = Math.max(b.y - (a.y + a.h), a.y - (b.y + b.h)), gx = Math.max(b.x - (a.x + a.w), a.x - (b.x + b.w));
+  const vert = gy >= 14 && (pref === 'v' || gx < 14 || (pref !== 'h' && gy >= gx));
   let p1, p2, c1, c2, k;
-  if (b.y >= a.y + a.h + 14) {            // 아래
+  if (vert && b.y >= a.y + a.h + 14) {    // 아래
     p1 = [acx, a.y + a.h]; p2 = [bcx, b.y - gap]; k = Math.max(30, (p2[1] - p1[1]) * 0.55);
     c1 = [p1[0], p1[1] + k]; c2 = [p2[0], p2[1] - k];
-  } else if (b.y + b.h <= a.y - 14) {     // 위
+  } else if (vert) {                      // 위
     p1 = [acx, a.y]; p2 = [bcx, b.y + b.h + gap]; k = Math.max(30, (p1[1] - p2[1]) * 0.55);
     c1 = [p1[0], p1[1] - k]; c2 = [p2[0], p2[1] + k];
   } else if (bcx >= acx) {                // 오른쪽
@@ -196,7 +199,8 @@ function drawEdges() {
   let delAt = null;
   for (const e of board.edges) {
     if (!board.nodes[e.from] || !board.nodes[e.to]) continue;
-    const c = curve(rect(e.from), rect(e.to)), isSel = sel && sel.type === 'edge' && sel.id === e.id;
+    const pid = e.from, pref = kidsOf(pid).length > 1 ? (lineDir(e.to, pid) === 'h' ? 'v' : 'h') : undefined;
+    const c = curve(rect(e.from), rect(e.to), 7, pref), isSel = sel && sel.type === 'edge' && sel.id === e.id;
     const p = document.createElementNS(NS, 'path');
     p.setAttribute('d', c.d); p.setAttribute('class', 'edge' + (isSel ? ' sel' : ''));
     p.setAttribute('marker-end', `url(#${isSel ? 'arrowSel' : 'arrow'})`);
@@ -271,27 +275,55 @@ function addEdge(from, to) {
   if (from === to || board.edges.some(e => (e.from === from && e.to === to) || (e.from === to && e.to === from))) return false;
   board.edges.push({ id: uid(), from, to }); return true;
 }
-function freeSpot(x, y, w = 130, h = 48) {
+// dir: 'h' 오른쪽으로 비켜 놓기, 'v' 아래로 비켜 놓기
+function freeSpot(x, y, w = 130, h = 48, dir = 'h') {
   const hit = (x, y) => Object.keys(board.nodes).some(id => {
     const r = rect(id); return x < r.x + r.w + 16 && x + w + 16 > r.x && y < r.y + r.h + 16 && y + h + 16 > r.y;
   });
-  for (let i = 0; i < 200 && hit(x, y); i++) x += 30;
+  for (let i = 0; i < 200 && hit(x, y); i++) if (dir === 'v') y += 24; else x += 30;
   return [x, y];
 }
-function addChild(pid) {
-  const p = rect(pid);
-  const kids = board.edges.filter(e => e.from === pid && board.nodes[e.to]).map(e => rect(e.to)).filter(r => r.y > p.y + p.h);
+const kidsOf = pid => board.edges.filter(e => e.from === pid && board.nodes[e.to]).map(e => e.to);
+const parentOf = id => board.edges.find(e => e.to === id && board.nodes[e.from])?.from || null;
+const center = r => [r.x + r.w / 2, r.y + r.h / 2];
+// 같은 줄 방향: 형제끼리 가로로 놓였으면 가로, 세로로 놓였으면 세로
+function lineDir(id, pid) {
+  const r = rect(id), [cx, cy] = center(r);
+  const sibs = pid ? kidsOf(pid).filter(k => k !== id) : [];
+  if (sibs.length) {
+    const near = sibs.map(rect).reduce((a, b) => (Math.hypot(...center(a).map((v, i) => v - [cx, cy][i])) < Math.hypot(...center(b).map((v, i) => v - [cx, cy][i])) ? a : b));
+    const [nx, ny] = center(near);
+    return Math.abs(nx - cx) >= Math.abs(ny - cy) ? 'h' : 'v';
+  }
+  if (pid) { const [px, py] = center(rect(pid)); return Math.abs(cy - py) >= Math.abs(cx - px) ? 'h' : 'v'; }   // 부모 아래 → 가로 줄, 부모 옆 → 세로 줄
+  return board.nodes[id].dir || 'h';
+}
+// id 와 같은 줄의 다음 자리 (가로면 윗선 맞춤, 세로면 왼쪽선 맞춤)
+function nextInLine(id, pid) {
+  const dir = lineDir(id, pid), r = rect(id);
+  const line = [id, ...(pid ? kidsOf(pid) : [])].filter((v, i, a) => a.indexOf(v) === i).map(rect)
+    .filter(o => dir === 'h' ? Math.abs(o.y - r.y) < 40 : Math.abs(o.x - r.x) < 40);
   let x, y;
-  if (!kids.length) { x = p.x + p.w / 2 - 60; y = p.y + p.h + 76; }
-  else { const last = kids.reduce((a, b) => (b.x + b.w > a.x + a.w ? b : a)); x = last.x + last.w + 30; y = last.y; }
-  [x, y] = freeSpot(x, y);
+  if (dir === 'h') { const last = line.reduce((a, b) => (b.x + b.w > a.x + a.w ? b : a)); x = last.x + last.w + 30; y = r.y; }
+  else { const last = line.reduce((a, b) => (b.y + b.h > a.y + a.h ? b : a)); x = r.x; y = last.y + last.h + 24; }
+  [x, y] = freeSpot(x, y, 130, 48, dir);
+  return { x, y, dir };
+}
+function addChild(pid) {
+  const kids = kidsOf(pid);
+  let x, y;
+  if (kids.length) {                                          // 이미 꼬리가 있으면 그 줄에 이어서
+    const last = kids[kids.length - 1];
+    ({ x, y } = nextInLine(last, pid));
+  } else {
+    const p = rect(pid); [x, y] = freeSpot(p.x + p.w / 2 - 60, p.y + p.h + 76);
+  }
   const n = createNode(x, y); addEdge(pid, n.id); return n;
 }
 function addSibling(id) {
-  const r = rect(id), parent = board.edges.find(e => e.to === id && board.nodes[e.from]);
-  const [x, y] = freeSpot(r.x + r.w + 30, r.y);
+  const pid = parentOf(id), { x, y, dir } = nextInLine(id, pid);
   const n = createNode(x, y);
-  if (parent) addEdge(parent.from, n.id);
+  if (pid) addEdge(pid, n.id); else n.dir = board.nodes[id].dir = dir;
   return n;
 }
 // 상자 버튼 (+ / − / ×)
@@ -302,6 +334,29 @@ function doAct(act, id, mode) {
   pushUndo();
   const n = act === 'child' ? addChild(id) : addSibling(id);
   render(); startEdit(n.id, mode); save();
+}
+
+// 크기 조절: 잡은 쪽만 움직이고 반대쪽은 고정. 손글씨는 화면에서 제자리에 있게 옮김
+function resizeTo(n, s, dx, dy) {
+  const h = s.h, E = h.includes('e'), W = h.includes('w'), S = h.includes('s'), N = h.includes('n');
+  let w = s.w0 + (E ? dx : W ? -dx : 0), hh = s.h0 + (S ? dy : N ? -dy : 0);
+  if (n.img) {
+    const ar = n.ar || (s.h0 - 12) / (s.w0 - 12);
+    if (!E && !W) w = (hh - 12) / ar + 12;
+    w = Math.max(60, w); hh = (w - 12) * ar + 12;
+    n.w = r1(w);
+  } else {
+    let mnX = Infinity, mnY = Infinity, mxX = 0, mxY = 0;
+    for (const st of s.ink0) for (const [x, y] of st.p) { mnX = Math.min(mnX, x); mnY = Math.min(mnY, y); mxX = Math.max(mxX, x); mxY = Math.max(mxY, y); }
+    const has = s.ink0.length > 0;
+    w = Math.max(60, w, has ? (W ? s.w0 - mnX + 4 : mxX + 16) : 0);
+    hh = Math.max(40, hh, has ? (N ? s.h0 - mnY + 4 : mxY + 14) : 0);
+    n.w = r1(w); n.h = r1(hh);
+    const ox = W ? w - s.w0 : 0, oy = N ? hh - s.h0 : 0;
+    n.ink = (ox || oy) ? s.ink0.map(st => ({ p: st.p.map(([x, y]) => [r1(x + ox), r1(y + oy)]) })) : s.ink0;
+  }
+  n.x = r1(W ? s.x0 + s.w0 - w : s.x0);
+  n.y = r1(N ? s.y0 + s.h0 - hh : s.y0);
 }
 
 // ---------- 포인터(손가락·펜슬) ----------
@@ -326,7 +381,8 @@ function cancelGesture() {
   if (!g) return;
   const cur = g; g = null;
   if (cur.kind === 'ink') { cur.path.remove(); undoStack.pop(); updateBar(); }
-  if (cur.kind === 'node' && cur.moved) { const n = board.nodes[cur.id]; if (n) { n.x = cur.ox; n.y = cur.oy; } els.get(cur.id)?.classList.remove('dragging'); render(); }
+  clearTimeout(cur.timer); els.get(cur.id)?.classList.remove('lift');
+  if (cur.kind === 'node' && cur.moved && !cur.connect) { const n = board.nodes[cur.id]; if (n) { n.x = cur.ox; n.y = cur.oy; } els.get(cur.id)?.classList.remove('dragging'); render(); }
   tmpEdge.setAttribute('d', ''); setDrop(null);
 }
 function startPinch() {
@@ -344,10 +400,11 @@ function movePinch() {
 stage.addEventListener('pointerdown', e => {
   if (e.target.closest('#edgeDel')) return;
   const pen = e.pointerType !== 'touch';
-  const nb = e.target.closest('.nb'), rz = e.target.closest('.rz');
+  const nb = e.target.closest('.nb'), rz = e.target.closest('.hd');
   const nodeEl = e.target.closest('.node'), nid = nodeEl && nodeEl.dataset.id;
   const edgeId = e.target.closest('.ehit')?.dataset.edge;
 
+  const wasEditing = !!editing;
   if (!pen) {
     if (e.isPrimary) { for (const [k, p] of ptrs) if (p.type === 'touch') ptrs.delete(k); pinch = null; }   // 놓친 손가락 정리
     if (g && g.pen) return;                                 // 펜슬 쓰는 중엔 손바닥 무시
@@ -363,10 +420,18 @@ stage.addEventListener('pointerdown', e => {
     if (!nb && !rz && editing && nid === editing) { e.preventDefault(); startInk(e, nid); return; }
     if (!nb && !rz && editing) finishEdit();                // 상자 밖을 펜슬로 터치 → 쓰기 끝
   }
-  const base = { pen, pid: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false };
+  const base = { pen, pid: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false, wasEditing };
   if (nb) g = { ...base, kind: 'btn', act: nb.dataset.act, id: nid };
-  else if (rz && board.nodes[nid]) { const s = sizes.get(nid); g = { ...base, kind: 'resize', id: nid, w0: s.w, h0: s.h }; }
-  else if (nid && board.nodes[nid]) g = { ...base, kind: 'node', id: nid, ox: board.nodes[nid].x, oy: board.nodes[nid].y };
+  else if (rz && board.nodes[nid]) {
+    const s = sizes.get(nid), n = board.nodes[nid];
+    g = { ...base, kind: 'resize', id: nid, h: rz.dataset.h, x0: n.x, y0: n.y, w0: s.w, h0: s.h, ink0: n.ink };
+  } else if (nid && board.nodes[nid]) {
+    g = { ...base, kind: 'node', id: nid, ox: board.nodes[nid].x, oy: board.nodes[nid].y };
+    if (pen) {                                              // 펜슬: 바로 끌면 선 긋기(연결), 꾹 누른 뒤 끌면 이동
+      const cur = g;
+      cur.timer = setTimeout(() => { if (g === cur && !cur.moved) { cur.hold = true; els.get(nid)?.classList.add('lift'); } }, 380);
+    }
+  }
   else if (edgeId) g = { ...base, kind: 'edge', id: edgeId, vx: board.view.x, vy: board.view.y };
   else g = { ...base, kind: 'empty', vx: board.view.x, vy: board.view.y };
   if (nb || rz) e.preventDefault();
@@ -396,20 +461,20 @@ window.addEventListener('pointermove', e => {
   const dx = e.clientX - g.sx, dy = e.clientY - g.sy, z = board.view.z;
   if (!g.moved && Math.hypot(dx, dy) > (g.pen ? 6 : 9)) {
     g.moved = true;
-    if (g.kind === 'node' || g.kind === 'resize') pushUndo();
-    if (g.kind === 'node') els.get(g.id).classList.add('dragging');
+    clearTimeout(g.timer);
+    if (g.kind === 'node' && g.pen && !g.hold) g.connect = true;
+    if ((g.kind === 'node' && !g.connect) || g.kind === 'resize') pushUndo();
+    if (g.kind === 'node' && !g.connect) els.get(g.id).classList.add('dragging');
   }
   if (!g.moved) return;
-  if (g.kind === 'btn') {                                    // + 를 끌면 다른 상자와 연결
-    if (g.act !== 'child') return;
+  if (g.kind === 'btn' || g.connect) {                       // + 를 끌거나 펜슬로 상자에서 선을 그으면 연결
+    if (g.kind === 'btn' && g.act !== 'child') return;
     const w = toWorld(e.clientX, e.clientY);
     tmpEdge.setAttribute('d', curve(rect(g.id), { x: w.x, y: w.y, w: 0, h: 0 }, 0).d);
     setDrop(nodeAt(e.clientX, e.clientY, g.id));
   } else if (g.kind === 'resize') {
-    const n = board.nodes[g.id], ext = inkExtent(n);
-    n.w = r1(Math.max(n.img ? 60 : Math.max(60, ext.w), g.w0 + dx / z));
-    if (!n.img) n.h = r1(Math.max(Math.max(40, ext.h), g.h0 + dy / z));
-    updateNodeEl(n, els.get(g.id)); measure(); drawEdges();
+    resizeTo(board.nodes[g.id], g, dx / z, dy / z);
+    updateNodeEl(board.nodes[g.id], els.get(g.id)); measure(); drawEdges();
   } else if (g.kind === 'node') {                            // 상자 이동 (다른 상자 위에 놓으면 연결)
     const n = board.nodes[g.id]; n.x = r1(g.ox + dx / z); n.y = r1(g.oy + dy / z);
     const el = els.get(g.id); el.style.left = n.x + 'px'; el.style.top = n.y + 'px';
@@ -454,7 +519,14 @@ function endPointer(e, cancelled) {
     render(); save(); return;
   }
   if (cur.kind === 'node') {
-    els.get(cur.id)?.classList.remove('dragging');
+    clearTimeout(cur.timer);
+    els.get(cur.id)?.classList.remove('dragging', 'lift');
+    if (cur.connect) {                                       // 펜슬로 그은 선 → 연결 (빈 곳이면 새 상자)
+      pushUndo();
+      if (target) { if (!addEdge(cur.id, target)) undoStack.pop(); sel = { type: 'node', id: target }; render(); save(); }
+      else { const w = toWorld(e.clientX, e.clientY), n = createNode(w.x - 20, w.y - 22); addEdge(cur.id, n.id); render(); startEdit(n.id, 'pen'); save(); }
+      return;
+    }
     if (cur.moved) {
       if (target) {                                          // 다른 상자 위에 놓음 → 그 상자에서 꼬리 잇기, 제자리로
         const n = board.nodes[cur.id]; n.x = cur.ox; n.y = cur.oy;
@@ -471,7 +543,7 @@ function endPointer(e, cancelled) {
   // 빈 곳 탭: 쓰던 게 있으면 끝내기, 없으면 새 상자
   const now = Date.now();
   const dbl = lastTap && now - lastTap.t < 400 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
-  const busy = !!(editing || sel);
+  const busy = cur.wasEditing;                               // 쓰는 중이었으면 끝내기만
   lastTap = { t: now, x: e.clientX, y: e.clientY };
   if (editing) finishEdit();
   if (sel) { sel = null; render(); }

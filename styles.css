@@ -38,8 +38,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .ink { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
 .ink path { fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 
-.tools { position: absolute; right: -10px; top: -15px; display: none; gap: 5px; }
+.tools { position: absolute; right: -4px; bottom: calc(100% + 12px); display: none; gap: 6px; z-index: 2; }
 .node.selected .tools { display: flex; }
+.node.lift { transform: scale(1.04); box-shadow: 0 14px 34px rgba(60, 40, 20, .2); transition: transform .12s; }
 .nb {
   position: relative; display: flex; align-items: center; justify-content: center;
   width: 26px; height: 26px; padding: 0; border-radius: 50%; font-size: 17px; line-height: 1;
@@ -48,9 +49,16 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .nb::after { content: ''; position: absolute; inset: -6px; }
 .nb[data-act=child] { background: var(--accent); color: #fff; border-color: var(--accent); }
 .nb[data-act=sibling] { color: var(--accent); border-color: var(--accent); }
-.rz { position: absolute; right: -9px; bottom: -9px; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 1.5px solid var(--accent); display: none; touch-action: none; }
-.rz::after { content: ''; position: absolute; inset: -10px; }
-.node.selected .rz { display: block; }
+.hd { position: absolute; display: none; box-sizing: border-box; background: #fff; border: 1.5px solid var(--accent); touch-action: none; z-index: 1; }
+.hd::after { content: ''; position: absolute; inset: -10px; }
+.node.selected:not(.editing) .hd { display: block; }
+.hd-nw, .hd-ne, .hd-sw, .hd-se { width: 14px; height: 14px; border-radius: 50%; }
+.hd-nw { left: -8px; top: -8px; } .hd-ne { right: -8px; top: -8px; }
+.hd-sw { left: -8px; bottom: -8px; } .hd-se { right: -8px; bottom: -8px; }
+.hd-n, .hd-s { left: 50%; width: 24px; height: 9px; margin-left: -12px; border-radius: 5px; }
+.hd-n { top: -5px; } .hd-s { bottom: -5px; }
+.hd-e, .hd-w { top: 50%; width: 9px; height: 24px; margin-top: -12px; border-radius: 5px; }
+.hd-e { right: -5px; } .hd-w { left: -5px; }
 .node.sized .txt { max-width: none; }
 .pic { display: none; width: 100%; height: auto; border-radius: 10px; pointer-events: none; -webkit-user-drag: none; }
 .node.is-img { padding: 6px; }
