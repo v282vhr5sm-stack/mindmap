@@ -12,7 +12,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" href="icon-180.png">
-<link rel="stylesheet" href="styles.css?v=2">
+<link rel="stylesheet" href="styles.css?v=3">
 </head>
 <body>
 <div id="stage">
@@ -32,7 +32,7 @@
     <div id="nodes"></div>
     <button id="edgeDel" class="round-btn" hidden aria-label="연결 삭제">×</button>
   </div>
-  <div id="hint">빈 곳을 <b>두 번 탭</b>해서 시작하세요<br><span>펜슬로 쓰거나 · 손가락으로 탭해서 키보드로 입력</span></div>
+  <div id="hint">빈 곳을 <b>탭</b>해서 시작하세요<br><span>펜슬로 쓰거나 · 손가락으로 탭해서 키보드로 입력</span></div>
 </div>
 
 <div class="bar left">
@@ -43,8 +43,11 @@
   <button id="undoBtn" aria-label="되돌리기">↶</button>
   <button id="redoBtn" aria-label="다시하기">↷</button>
   <button id="fitBtn" aria-label="전체 보기">⤢</button>
+  <button id="imgBtn" aria-label="사진 추가">🖼</button>
   <button id="addBtn" class="accent" aria-label="새 주제">＋</button>
 </div>
+
+<input id="imgInput" type="file" accept="image/*" multiple hidden>
 
 <div id="drawer" hidden>
   <div class="sheet">
@@ -54,18 +57,21 @@
     <div class="help">
       <b>사용법</b>
       <ul>
-        <li>빈 곳 <b>두 번 탭</b> → 새 상자</li>
+        <li>빈 곳 <b>탭</b> → 새 상자 (쓰는 중이면 쓰기 끝)</li>
         <li>상자를 <b>손가락</b>으로 탭 → 키보드 입력 · <b>펜슬</b>로 탭 → 손글씨</li>
         <li><b>엔터</b> 또는 상자 밖을 <b>펜슬로 터치</b> → 쓰기 끝</li>
         <li><b>+</b> 아래로 꼬리 잇기 · <b>−</b> 같은 줄에 상자 추가</li>
-        <li>펜슬로 상자에서 다른 상자로 <b>끌기</b> → 연결 (빈 곳에 놓으면 새 상자)</li>
-        <li>손가락으로 상자 끌기 → 이동 · 빈 곳 끌기 → 화면 이동 · 두 손가락 → 확대/축소</li>
+        <li><b>+</b>를 펜슬로 끌어 다른 상자에 놓기 → 연결</li>
+        <li>상자를 끌어서 이동 (펜슬·손가락) · 다른 상자 위에 놓으면 그 상자에 꼬리로 연결</li>
+        <li>오른쪽 아래 점을 끌어 크기 조절 · 점을 탭하면 자동 크기</li>
+        <li>🖼 사진 추가 (상자를 선택해 두면 그 아래로 연결)</li>
+        <li>빈 곳 끌기 → 화면 이동 · 두 손가락 → 확대/축소</li>
         <li>화살표를 탭 → × 로 연결 삭제</li>
       </ul>
     </div>
   </div>
 </div>
 
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

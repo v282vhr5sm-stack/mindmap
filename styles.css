@@ -38,17 +38,26 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .ink { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
 .ink path { fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 
+.tools { position: absolute; right: -10px; top: -15px; display: none; gap: 5px; }
+.node.selected .tools { display: flex; }
 .nb {
-  position: absolute; display: none; align-items: center; justify-content: center;
-  width: 36px; height: 36px; padding: 0; border-radius: 50%; border: 0;
-  font-size: 24px; line-height: 1; box-shadow: 0 2px 8px rgba(60, 40, 20, .15);
-  touch-action: manipulation;
+  position: relative; display: flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; padding: 0; border-radius: 50%; font-size: 17px; line-height: 1;
+  background: #fff; color: var(--muted); border: 1px solid var(--border); touch-action: none;
 }
-.nb::after { content: ""; position: absolute; inset: -9px; }
-.node.selected .nb { display: flex; }
-.nb.plus { left: 50%; bottom: -52px; transform: translateX(-50%); background: var(--accent); color: #fff; }
-.nb.minus { right: -52px; top: 50%; transform: translateY(-50%); background: #fff; color: var(--accent); border: 1.5px solid var(--accent); }
-.nb.del { right: -13px; top: -13px; width: 26px; height: 26px; font-size: 17px; background: #fff; color: var(--muted); border: 1px solid var(--border); box-shadow: none; }
+.nb::after { content: ''; position: absolute; inset: -6px; }
+.nb[data-act=child] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.nb[data-act=sibling] { color: var(--accent); border-color: var(--accent); }
+.rz { position: absolute; right: -9px; bottom: -9px; width: 18px; height: 18px; border-radius: 50%; background: #fff; border: 1.5px solid var(--accent); display: none; touch-action: none; }
+.rz::after { content: ''; position: absolute; inset: -10px; }
+.node.selected .rz { display: block; }
+.node.sized .txt { max-width: none; }
+.pic { display: none; width: 100%; height: auto; border-radius: 10px; pointer-events: none; -webkit-user-drag: none; }
+.node.is-img { padding: 6px; }
+.node.is-img .pic { display: block; }
+.node.is-img .txt { display: none; }
+.node.dragging { pointer-events: none; opacity: .85; box-shadow: 0 12px 30px rgba(60, 40, 20, .18); z-index: 6; }
+.node.drop { border-color: var(--accent); box-shadow: 0 0 0 5px rgba(224, 121, 90, .25); }
 
 .round-btn {
   position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%;

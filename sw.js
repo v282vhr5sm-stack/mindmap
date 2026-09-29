@@ -1,5 +1,5 @@
 // 앱 파일을 수정하면 VERSION 을 올리세요 (node bump.cjs 가 index.html 과 함께 올려줌)
-const VERSION = 'mm-v2';
+const VERSION = 'mm-v3';
 const SHELL = ['./', 'index.html', 'styles.css', 'app.js', 'manifest.webmanifest', 'icon-180.png', 'icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));

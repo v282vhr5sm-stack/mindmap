@@ -1,5 +1,5 @@
 'use strict';
-// 아이패드용 마인드맵 — 키보드 입력 + 애플펜슬 손글씨, 곡선 화살표 연결. 데이터는 이 기기(IndexedDB)에 저장.
+// 아이패드용 마인드맵 — 키보드 입력 + 애플펜슬 손글씨, 곡선 화살표 연결, 사진. 데이터는 이 기기(IndexedDB)에 저장.
 
 const $ = s => document.querySelector(s);
 const NS = 'http://www.w3.org/2000/svg';
@@ -32,19 +32,19 @@ const DB = {
 };
 
 // ---------- 상태 ----------
-let board = null;          // { id, title, nodes: {id: {id,x,y,text,ink:[{p:[[x,y],...]}]}}, edges: [{id,from,to}], view: {x,y,z}, updated }
+// board = { id, title, nodes: {id: {id,x,y,text,ink:[{p:[[x,y],...]}], w?, h?, img?}}, edges: [{id,from,to}], images: {id: dataURL}, view: {x,y,z}, updated }
+let board = null;
 let sel = null;            // { type: 'node'|'edge', id }
 let editing = null;        // 편집 중인 상자 id
 let editMode = null;       // 'kbd' | 'pen'
 let editSnap = false;      // 이번 편집에서 되돌리기 기록을 남겼는지
 let undoStack = [], redoStack = [];
-let lastPtr = 'touch';     // 마지막으로 누른 입력 종류
 let pendingFocus = null;
 const els = new Map(), sizes = new Map();
 
 const CE = (() => { const d = document.createElement('div'); try { d.contentEditable = 'plaintext-only'; } catch {} return d.contentEditable === 'plaintext-only' ? 'plaintext-only' : 'true'; })();
 
-// ---------- 되돌리기 ----------
+// ---------- 되돌리기 (사진 데이터는 board.images 에 따로 있어서 기록에 안 들어감) ----------
 const snap = () => JSON.stringify({ nodes: board.nodes, edges: board.edges });
 function pushUndo() { undoStack.push(snap()); if (undoStack.length > 100) undoStack.shift(); redoStack.length = 0; updateBar(); }
 function restore(s) {
@@ -102,12 +102,16 @@ function strokeD(p) {
 function makeNodeEl(n) {
   const el = document.createElement('div');
   el.className = 'node'; el.dataset.id = n.id;
-  el.innerHTML = `<div class="txt" data-ph="입력하거나 펜슬로 쓰기" spellcheck="false" autocapitalize="off"></div>
+  el.innerHTML = `<img class="pic" alt="" draggable="false">
+    <div class="txt" data-ph="입력하거나 펜슬로 쓰기" spellcheck="false" autocapitalize="off"></div>
     <svg class="ink" xmlns="${NS}"></svg>
-    <button class="nb plus" data-act="child" aria-label="아래로 꼬리 잇기">+</button>
-    <button class="nb minus" data-act="sibling" aria-label="같은 줄에 추가">−</button>
-    <button class="nb del" data-act="delete" aria-label="상자 삭제">×</button>`;
-  const t = el.firstElementChild;
+    <div class="tools">
+      <button class="nb" data-act="child" aria-label="아래로 꼬리 잇기">+</button>
+      <button class="nb" data-act="sibling" aria-label="같은 줄에 추가">−</button>
+      <button class="nb" data-act="delete" aria-label="상자 삭제">×</button>
+    </div>
+    <div class="rz" aria-label="크기 조절"></div>`;
+  const t = el.querySelector('.txt');
   let shift = false;
   t.addEventListener('keydown', e => {
     shift = e.shiftKey;
@@ -130,17 +134,25 @@ function makeNodeEl(n) {
 }
 
 function updateNodeEl(n, el) {
-  const isEd = editing === n.id, t = el.firstElementChild;
+  const isEd = editing === n.id, t = el.querySelector('.txt'), isImg = !!n.img;
   el.style.left = n.x + 'px'; el.style.top = n.y + 'px';
   if (!isEd && t.textContent !== n.text) t.textContent = n.text;
+  if (isImg) {
+    const src = board.images[n.img] || '', pic = el.querySelector('.pic');
+    if (n.ar) pic.style.aspectRatio = String(1 / n.ar);
+    if (el._src !== src) { pic.onload = () => { measure(); drawEdges(); }; pic.src = src; el._src = src; }
+  }
   if (el._ink !== n.ink || el._inkN !== n.ink.length) {
     const svg = el.querySelector('.ink'); svg.textContent = '';
     for (const s of n.ink) { const p = document.createElementNS(NS, 'path'); p.setAttribute('d', strokeD(s.p)); svg.appendChild(p); }
     el._ink = n.ink; el._inkN = n.ink.length;
   }
   const ext = inkExtent(n);
+  el.style.width = isImg ? (n.w || 240) + 'px' : n.w ? n.w + 'px' : '';
   el.style.minWidth = (isEd ? Math.max(280, ext.w + 110) : Math.max(56, ext.w)) + 'px';
-  el.style.minHeight = (isEd ? Math.max(140, ext.h + 90) : ext.h) + 'px';
+  el.style.minHeight = (isEd ? Math.max(140, ext.h + 90, n.h || 0) : isImg ? 0 : Math.max(ext.h, n.h || 0)) + 'px';
+  el.classList.toggle('is-img', isImg);
+  el.classList.toggle('sized', !!n.w && !isImg);
   el.classList.toggle('editing', isEd);
   el.classList.toggle('selected', !!sel && sel.type === 'node' && sel.id === n.id);
   el.classList.toggle('has-ink', n.ink.length > 0);
@@ -205,10 +217,11 @@ function focusEnd(t) {
 }
 function startEdit(id, mode) {
   if (editing && editing !== id) finishEdit();
-  if (!board.nodes[id]) return;
+  const n = board.nodes[id]; if (!n) return;
+  if (n.img) { sel = { type: 'node', id }; render(); return; }   // 사진은 선택만
   editing = id; editMode = mode; editSnap = false; sel = { type: 'node', id };
   render();
-  const t = els.get(id).firstElementChild;
+  const t = els.get(id).querySelector('.txt');
   t.contentEditable = CE;
   if (mode === 'kbd') { focusEnd(t); pendingFocus = t; }
   else if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
@@ -218,7 +231,7 @@ function exitEdit() {
   if (!editing) return;
   const el = els.get(editing);
   editing = null; editMode = null; pendingFocus = null;
-  if (el) { const t = el.firstElementChild; t.blur(); t.contentEditable = 'false'; }
+  if (el) { const t = el.querySelector('.txt'); t.blur(); t.contentEditable = 'false'; }
   render();
 }
 function finishEdit(opts = {}) {
@@ -226,13 +239,13 @@ function finishEdit(opts = {}) {
   const id = editing, n = board.nodes[id], el = els.get(id);
   editing = null; editMode = null; pendingFocus = null;
   if (el) {
-    const t = el.firstElementChild; t.blur();
+    const t = el.querySelector('.txt'); t.blur();
     if (n) n.text = t.innerText.replace(/ /g, ' ').replace(/^\s*\n/, '').replace(/\s+$/, '');
     t.contentEditable = 'false'; t.textContent = n ? n.text : '';
   }
   if (n) {
     if (!n.text && !n.ink.length && !opts.keepEmpty) { removeNode(id); if (sel && sel.id === id) sel = null; }
-    else if (n.ink.length && !n.text) {           // 손글씨만 있으면 상자를 글씨에 딱 맞게
+    else if (n.ink.length && !n.text && !n.w) {     // 손글씨만 있으면 상자를 글씨에 딱 맞게
       let mx = Infinity, my = Infinity;
       for (const s of n.ink) for (const [x, y] of s.p) { if (x < mx) mx = x; if (y < my) my = y; }
       const dx = r1(mx - 16), dy = r1(my - 12);
@@ -242,7 +255,7 @@ function finishEdit(opts = {}) {
   render(); save();
 }
 function finishSoon(id) {
-  const el = els.get(id); if (el) el.firstElementChild.blur();   // 한글 조합 중인 글자 확정
+  const el = els.get(id); if (el) el.querySelector('.txt').blur();   // 한글 조합 중인 글자 확정
   setTimeout(() => { if (editing === id) finishEdit(); }, 30);
 }
 
@@ -255,7 +268,7 @@ function removeNode(id) {
   board.edges = board.edges.filter(e => e.from !== id && e.to !== id);
 }
 function addEdge(from, to) {
-  if (from === to || board.edges.some(e => e.from === from && e.to === to)) return false;
+  if (from === to || board.edges.some(e => (e.from === from && e.to === to) || (e.from === to && e.to === from))) return false;
   board.edges.push({ id: uid(), from, to }); return true;
 }
 function freeSpot(x, y, w = 130, h = 48) {
@@ -281,19 +294,40 @@ function addSibling(id) {
   if (parent) addEdge(parent.from, n.id);
   return n;
 }
+// 상자 버튼 (+ / − / ×)
+function doAct(act, id, mode) {
+  if (act === 'delete') { exitEdit(); pushUndo(); removeNode(id); sel = null; render(); save(); return; }
+  if (editing) finishEdit({ keepEmpty: true });
+  if (!board.nodes[id]) return;
+  pushUndo();
+  const n = act === 'child' ? addChild(id) : addSibling(id);
+  render(); startEdit(n.id, mode); save();
+}
 
 // ---------- 포인터(손가락·펜슬) ----------
 const ptrs = new Map();
 let g = null;        // 진행 중인 한 손가락/펜 동작
 let pinch = null;
 let lastTap = null;
+let dropEl = null;
 const touchList = () => [...ptrs.values()].filter(p => p.type === 'touch');
+const nodeAt = (x, y, except) => {
+  const id = document.elementFromPoint(x, y)?.closest('.node')?.dataset.id;
+  return id && id !== except && board.nodes[id] ? id : null;
+};
+function setDrop(id) {
+  const el = id ? els.get(id) : null;
+  if (dropEl === el) return;
+  if (dropEl) dropEl.classList.remove('drop');
+  dropEl = el; if (el) el.classList.add('drop');
+}
 
 function cancelGesture() {
   if (!g) return;
-  if (g.kind === 'ink') { g.path.remove(); undoStack.pop(); updateBar(); }
-  if (g.connect) tmpEdge.setAttribute('d', '');
-  g = null;
+  const cur = g; g = null;
+  if (cur.kind === 'ink') { cur.path.remove(); undoStack.pop(); updateBar(); }
+  if (cur.kind === 'node' && cur.moved) { const n = board.nodes[cur.id]; if (n) { n.x = cur.ox; n.y = cur.oy; } els.get(cur.id)?.classList.remove('dragging'); render(); }
+  tmpEdge.setAttribute('d', ''); setDrop(null);
 }
 function startPinch() {
   cancelGesture();
@@ -307,32 +341,35 @@ function movePinch() {
   board.view = { z, x: cx - wx * z, y: cy - wy * z }; applyView();
 }
 
-window.addEventListener('pointerdown', e => { lastPtr = e.pointerType; }, true);
-
 stage.addEventListener('pointerdown', e => {
-  if (e.target.closest('button')) return;
+  if (e.target.closest('#edgeDel')) return;
   const pen = e.pointerType !== 'touch';
+  const nb = e.target.closest('.nb'), rz = e.target.closest('.rz');
   const nodeEl = e.target.closest('.node'), nid = nodeEl && nodeEl.dataset.id;
   const edgeId = e.target.closest('.ehit')?.dataset.edge;
 
   if (!pen) {
+    if (e.isPrimary) { for (const [k, p] of ptrs) if (p.type === 'touch') ptrs.delete(k); pinch = null; }   // 놓친 손가락 정리
     if (g && g.pen) return;                                 // 펜슬 쓰는 중엔 손바닥 무시
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, type: 'touch' });
     if (touchList().length === 2) { startPinch(); return; }
     if (g || pinch) return;
-    if (editing && nid === editing) return;                 // 편집 중인 글자는 기본 동작(커서 이동)
-    if (editing && editMode === 'pen') return;              // 손글씨 중엔 한 손가락(손바닥) 무시
+    if (!nb && !rz && editing && nid === editing) return;   // 편집 중인 글자는 기본 동작(커서 이동)
+    if (!nb && editing && editMode === 'pen') return;       // 손글씨 중엔 한 손가락(손바닥) 무시
   } else {
     if (g && !g.pen) cancelGesture();                       // 펜슬이 손가락보다 우선
     if (g) return;
     ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, type: 'pen' });
-    if (editing && nid === editing) { e.preventDefault(); startInk(e, nid); return; }
-    if (editing) finishEdit();                              // 상자 밖을 펜슬로 터치 → 쓰기 끝
+    if (!nb && !rz && editing && nid === editing) { e.preventDefault(); startInk(e, nid); return; }
+    if (!nb && !rz && editing) finishEdit();                // 상자 밖을 펜슬로 터치 → 쓰기 끝
   }
-  const kind = nid && board.nodes[nid] ? 'node' : edgeId ? 'edge' : 'empty';
-  g = { kind, id: kind === 'node' ? nid : edgeId, pen, pid: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false };
-  if (kind === 'node') { g.ox = board.nodes[nid].x; g.oy = board.nodes[nid].y; }
-  else { g.vx = board.view.x; g.vy = board.view.y; }
+  const base = { pen, pid: e.pointerId, sx: e.clientX, sy: e.clientY, moved: false };
+  if (nb) g = { ...base, kind: 'btn', act: nb.dataset.act, id: nid };
+  else if (rz && board.nodes[nid]) { const s = sizes.get(nid); g = { ...base, kind: 'resize', id: nid, w0: s.w, h0: s.h }; }
+  else if (nid && board.nodes[nid]) g = { ...base, kind: 'node', id: nid, ox: board.nodes[nid].x, oy: board.nodes[nid].y };
+  else if (edgeId) g = { ...base, kind: 'edge', id: edgeId, vx: board.view.x, vy: board.view.y };
+  else g = { ...base, kind: 'empty', vx: board.view.x, vy: board.view.y };
+  if (nb || rz) e.preventDefault();
   try { stage.setPointerCapture(e.pointerId); } catch {}
 });
 
@@ -351,7 +388,7 @@ function addInkPoint(e) {
   g.pts.push(pt); g.path.setAttribute('d', strokeD(g.pts));
 }
 
-stage.addEventListener('pointermove', e => {
+window.addEventListener('pointermove', e => {
   const p = ptrs.get(e.pointerId); if (p) { p.x = e.clientX; p.y = e.clientY; }
   if (pinch) { if (p && p.type === 'touch') movePinch(); return; }
   if (!g || g.pid !== e.pointerId) return;
@@ -359,17 +396,25 @@ stage.addEventListener('pointermove', e => {
   const dx = e.clientX - g.sx, dy = e.clientY - g.sy, z = board.view.z;
   if (!g.moved && Math.hypot(dx, dy) > (g.pen ? 6 : 9)) {
     g.moved = true;
-    if (g.kind === 'node' && !g.pen) pushUndo();
-    if (g.kind === 'node' && g.pen) g.connect = true;
+    if (g.kind === 'node' || g.kind === 'resize') pushUndo();
+    if (g.kind === 'node') els.get(g.id).classList.add('dragging');
   }
   if (!g.moved) return;
-  if (g.kind === 'node' && g.connect) {
+  if (g.kind === 'btn') {                                    // + 를 끌면 다른 상자와 연결
+    if (g.act !== 'child') return;
     const w = toWorld(e.clientX, e.clientY);
     tmpEdge.setAttribute('d', curve(rect(g.id), { x: w.x, y: w.y, w: 0, h: 0 }, 0).d);
-  } else if (g.kind === 'node') {
+    setDrop(nodeAt(e.clientX, e.clientY, g.id));
+  } else if (g.kind === 'resize') {
+    const n = board.nodes[g.id], ext = inkExtent(n);
+    n.w = r1(Math.max(n.img ? 60 : Math.max(60, ext.w), g.w0 + dx / z));
+    if (!n.img) n.h = r1(Math.max(Math.max(40, ext.h), g.h0 + dy / z));
+    updateNodeEl(n, els.get(g.id)); measure(); drawEdges();
+  } else if (g.kind === 'node') {                            // 상자 이동 (다른 상자 위에 놓으면 연결)
     const n = board.nodes[g.id]; n.x = r1(g.ox + dx / z); n.y = r1(g.oy + dy / z);
     const el = els.get(g.id); el.style.left = n.x + 'px'; el.style.top = n.y + 'px';
     drawEdges();
+    setDrop(nodeAt(e.clientX, e.clientY, g.id));
   } else {
     board.view.x = g.vx + dx; board.view.y = g.vy + dy; applyView();
   }
@@ -379,8 +424,11 @@ function endPointer(e, cancelled) {
   ptrs.delete(e.pointerId);
   if (pinch) { if (touchList().length < 2) { pinch = null; save(); } return; }
   if (!g || g.pid !== e.pointerId) return;
+  if (cancelled) { cancelGesture(); return; }
   const cur = g; g = null;
-  if (cancelled) { g = cur; cancelGesture(); return; }
+  tmpEdge.setAttribute('d', '');
+  const target = dropEl && dropEl.dataset.id; setDrop(null);
+  const mode = cur.pen ? 'pen' : 'kbd';
 
   if (cur.kind === 'ink') {
     const n = board.nodes[cur.id];
@@ -388,46 +436,58 @@ function endPointer(e, cancelled) {
     else { cur.path.remove(); undoStack.pop(); updateBar(); }
     return;
   }
-  if (cur.kind === 'node') {
-    if (cur.connect) {
-      tmpEdge.setAttribute('d', '');
-      const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest('.node')?.dataset.id;
-      if (hit && hit !== cur.id) { pushUndo(); if (!addEdge(cur.id, hit)) undoStack.pop(); sel = { type: 'node', id: hit }; render(); save(); }
-      else if (!hit) {                                        // 빈 곳에 놓으면 새 상자
-        pushUndo();
-        const w = toWorld(e.clientX, e.clientY), n = createNode(w.x - 20, w.y - 22);
-        addEdge(cur.id, n.id); render(); startEdit(n.id, 'pen'); save();
-      }
-      return;
+  if (cur.kind === 'btn') {
+    if (!cur.moved) { doAct(cur.act, cur.id, mode); return; }
+    if (cur.act !== 'child') return;
+    if (editing) finishEdit({ keepEmpty: true });
+    pushUndo();
+    if (target) { if (!addEdge(cur.id, target)) undoStack.pop(); sel = { type: 'node', id: target }; render(); save(); }
+    else { const w = toWorld(e.clientX, e.clientY), n = createNode(w.x - 20, w.y - 22); addEdge(cur.id, n.id); render(); startEdit(n.id, mode); save(); }
+    return;
+  }
+  if (cur.kind === 'resize') {
+    if (!cur.moved) {                                        // 크기 점을 탭하면 자동 크기로
+      const n = board.nodes[cur.id];
+      if (n && (n.w || n.h)) { pushUndo(); delete n.w; delete n.h; if (n.img) n.w = 240; }
+      sel = { type: 'node', id: cur.id };
     }
-    if (cur.moved) { save(); return; }
-    startEdit(cur.id, cur.pen ? 'pen' : 'kbd');                // 탭 → 편집 (손가락: 키보드, 펜슬: 손글씨)
+    render(); save(); return;
+  }
+  if (cur.kind === 'node') {
+    els.get(cur.id)?.classList.remove('dragging');
+    if (cur.moved) {
+      if (target) {                                          // 다른 상자 위에 놓음 → 그 상자에서 꼬리 잇기, 제자리로
+        const n = board.nodes[cur.id]; n.x = cur.ox; n.y = cur.oy;
+        addEdge(target, cur.id); sel = { type: 'node', id: cur.id };
+      }
+      render(); save(); return;
+    }
+    startEdit(cur.id, mode);                                 // 탭 → 편집 (손가락: 키보드, 펜슬: 손글씨)
     return;
   }
   if (cur.moved) { save(); return; }
   if (cur.kind === 'edge') { if (editing) finishEdit(); sel = { type: 'edge', id: cur.id }; render(); return; }
 
-  // 빈 곳 탭
+  // 빈 곳 탭: 쓰던 게 있으면 끝내기, 없으면 새 상자
   const now = Date.now();
-  if (lastTap && now - lastTap.t < 380 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
-    lastTap = null;
-    if (editing) finishEdit();
-    pushUndo();
-    const w = toWorld(e.clientX, e.clientY), n = createNode(w.x - 60, w.y - 24);
-    render(); startEdit(n.id, cur.pen ? 'pen' : 'kbd'); save();
-    return;
-  }
+  const dbl = lastTap && now - lastTap.t < 400 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
+  const busy = !!(editing || sel);
   lastTap = { t: now, x: e.clientX, y: e.clientY };
   if (editing) finishEdit();
   if (sel) { sel = null; render(); }
+  if (busy && !dbl) return;
+  lastTap = null;
+  pushUndo();
+  const w = toWorld(e.clientX, e.clientY), n = createNode(w.x - 60, w.y - 24);
+  render(); startEdit(n.id, mode); save();
 }
-stage.addEventListener('pointerup', e => endPointer(e, false));
-stage.addEventListener('pointercancel', e => endPointer(e, true));
+window.addEventListener('pointerup', e => endPointer(e, false));
+window.addEventListener('pointercancel', e => endPointer(e, true));
 
 // 펜슬 터치는 기본 동작 막기 (iPad 손글씨→텍스트 자동변환·스크롤 방지)
 for (const type of ['touchstart', 'touchmove']) {
   stage.addEventListener(type, e => {
-    if (e.target.closest('button')) return;
+    if (e.target.closest('#edgeDel')) return;
     for (const t of e.changedTouches) if (t.touchType === 'stylus') { e.preventDefault(); return; }
   }, { passive: false });
 }
@@ -444,23 +504,46 @@ stage.addEventListener('wheel', e => {
   save();
 }, { passive: false });
 
-// 상자 버튼 (+ / − / ×)
-nodesLayer.addEventListener('click', e => {
-  const b = e.target.closest('.nb'); if (!b) return;
-  const id = b.closest('.node').dataset.id, act = b.dataset.act;
-  const mode = lastPtr === 'touch' ? 'kbd' : 'pen';
-  if (act === 'delete') { exitEdit(); pushUndo(); removeNode(id); sel = null; render(); save(); return; }
-  if (editing) finishEdit({ keepEmpty: true });
-  if (!board.nodes[id]) return;
-  pushUndo();
-  const n = act === 'child' ? addChild(id) : addSibling(id);
-  render(); startEdit(n.id, mode); save();
-});
 edgeDel.addEventListener('click', () => {
   if (!sel || sel.type !== 'edge') return;
   pushUndo(); board.edges = board.edges.filter(x => x.id !== sel.id); sel = null; render(); save();
 });
-edgeDel.addEventListener('pointerdown', e => e.stopPropagation());
+
+// ---------- 사진 ----------
+function readImage(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), im = new Image();
+    im.onload = () => {
+      const s = Math.min(1, 1600 / Math.max(im.naturalWidth, im.naturalHeight));
+      const c = document.createElement('canvas');
+      c.width = Math.round(im.naturalWidth * s); c.height = Math.round(im.naturalHeight * s);
+      const cx = c.getContext('2d'); cx.fillStyle = '#fff'; cx.fillRect(0, 0, c.width, c.height);
+      cx.drawImage(im, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(url);
+      res({ src: c.toDataURL('image/jpeg', 0.85), w: c.width, h: c.height });
+    };
+    im.onerror = () => { URL.revokeObjectURL(url); rej(new Error('image')); };
+    im.src = url;
+  });
+}
+$('#imgBtn').onclick = () => { if (editing) finishEdit({ keepEmpty: true }); $('#imgInput').click(); };
+$('#imgInput').onchange = async e => {
+  const files = [...e.target.files]; e.target.value = '';
+  if (!files.length) return;
+  const parent = sel && sel.type === 'node' && board.nodes[sel.id] ? sel.id : null;
+  pushUndo();
+  let last = null;
+  for (const f of files) {
+    let im; try { im = await readImage(f); } catch { alert('사진을 열 수 없어요.'); continue; }
+    const key = uid(); board.images[key] = im.src;
+    let n;
+    if (parent) n = addChild(parent);
+    else { const w = toWorld(innerWidth / 2, innerHeight / 2), [x, y] = freeSpot(w.x - 120, w.y - 90); n = createNode(x, y); }
+    n.img = key; n.ar = r1(im.h / im.w * 1000) / 1000; n.w = Math.min(240, im.w);
+    render(); last = n;
+  }
+  if (last) { sel = { type: 'node', id: last.id }; render(); save(); }
+};
 
 // ---------- 상단 버튼 ----------
 function updateBar() {
@@ -471,13 +554,15 @@ function updateBar() {
 $('#undoBtn').onclick = undo;
 $('#redoBtn').onclick = redo;
 $('#fitBtn').onclick = () => { if (editing) finishEdit(); fit(); };
+let lastBarPtr = 'touch';
+$('#addBtn').addEventListener('pointerdown', e => { lastBarPtr = e.pointerType; });
 $('#addBtn').onclick = () => {
   if (editing) finishEdit();
   pushUndo();
   const w = toWorld(innerWidth / 2, innerHeight / 2);
   const [x, y] = freeSpot(w.x - 60, w.y - 24);
   const n = createNode(x, y);
-  render(); startEdit(n.id, lastPtr === 'touch' ? 'kbd' : 'pen'); save();
+  render(); startEdit(n.id, lastBarPtr === 'touch' ? 'kbd' : 'pen'); save();
 };
 $('#titleBtn').onclick = () => {
   const t = prompt('마인드맵 이름', board.title);
@@ -514,7 +599,7 @@ $('#newBoard').onclick = async () => { await flush(); loadBoard(newBoard()); clo
 
 function newBoard() {
   const d = new Date();
-  const b = { id: uid(), title: `마인드맵 ${d.getMonth() + 1}.${d.getDate()}`, nodes: {}, edges: [], view: { x: 0, y: 0, z: 1 }, updated: Date.now() };
+  const b = { id: uid(), title: `마인드맵 ${d.getMonth() + 1}.${d.getDate()}`, nodes: {}, edges: [], images: {}, view: { x: 0, y: 0, z: 1 }, updated: Date.now() };
   DB.put(b); return b;
 }
 function loadBoard(b) {
@@ -523,8 +608,11 @@ function loadBoard(b) {
   for (const el of els.values()) el.remove();
   els.clear(); sizes.clear();
   board = b;
+  if (!b.images) b.images = {};
   for (const n of Object.values(b.nodes))                    // 쓰다 만 빈 상자 정리
-    if (!n.text && !n.ink.length && !b.edges.some(e => e.from === n.id)) removeNode(n.id);
+    if (!n.text && !n.ink.length && !n.img && !b.edges.some(e => e.from === n.id)) removeNode(n.id);
+  const used = new Set(Object.values(b.nodes).map(n => n.img).filter(Boolean));
+  for (const k of Object.keys(b.images)) if (!used.has(k)) delete b.images[k];   // 안 쓰는 사진 정리
   try { localStorage.setItem('mm.current', b.id); } catch {}
   render();
 }
@@ -536,7 +624,7 @@ function flush() {
   clearTimeout(saveTimer); saveTimer = null;
   if (!board) return Promise.resolve();
   board.updated = Date.now();
-  return DB.put(JSON.parse(JSON.stringify(board)));
+  return DB.put(board);
 }
 document.addEventListener('visibilitychange', () => { if (document.hidden) flush(); });
 window.addEventListener('pagehide', flush);
