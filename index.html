@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="마인드맵">
+<meta name="theme-color" content="#f7f5f2">
+<title>마인드맵</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-180.png">
+<link rel="stylesheet" href="styles.css?v=2">
+</head>
+<body>
+<div id="stage">
+  <div id="world">
+    <svg id="edges" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+          <path d="M1.5 1.5 L8 5 L1.5 8.5" fill="none" stroke="#a39a90" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+        <marker id="arrowSel" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="10" markerHeight="10" markerUnits="userSpaceOnUse" orient="auto">
+          <path d="M1.5 1.5 L8 5 L1.5 8.5" fill="none" stroke="#e0795a" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+      </defs>
+      <g id="edgeGroup"></g>
+      <path id="tmpEdge" class="edge tmp" d=""/>
+    </svg>
+    <div id="nodes"></div>
+    <button id="edgeDel" class="round-btn" hidden aria-label="연결 삭제">×</button>
+  </div>
+  <div id="hint">빈 곳을 <b>두 번 탭</b>해서 시작하세요<br><span>펜슬로 쓰거나 · 손가락으로 탭해서 키보드로 입력</span></div>
+</div>
+
+<div class="bar left">
+  <button id="menuBtn" aria-label="목록">☰</button>
+  <button id="titleBtn" class="title">마인드맵</button>
+</div>
+<div class="bar right">
+  <button id="undoBtn" aria-label="되돌리기">↶</button>
+  <button id="redoBtn" aria-label="다시하기">↷</button>
+  <button id="fitBtn" aria-label="전체 보기">⤢</button>
+  <button id="addBtn" class="accent" aria-label="새 주제">＋</button>
+</div>
+
+<div id="drawer" hidden>
+  <div class="sheet">
+    <div class="sheet-head"><b>내 마인드맵</b><button id="closeDrawer" aria-label="닫기">×</button></div>
+    <button id="newBoard" class="new-board">＋ 새 마인드맵</button>
+    <div id="boardList"></div>
+    <div class="help">
+      <b>사용법</b>
+      <ul>
+        <li>빈 곳 <b>두 번 탭</b> → 새 상자</li>
+        <li>상자를 <b>손가락</b>으로 탭 → 키보드 입력 · <b>펜슬</b>로 탭 → 손글씨</li>
+        <li><b>엔터</b> 또는 상자 밖을 <b>펜슬로 터치</b> → 쓰기 끝</li>
+        <li><b>+</b> 아래로 꼬리 잇기 · <b>−</b> 같은 줄에 상자 추가</li>
+        <li>펜슬로 상자에서 다른 상자로 <b>끌기</b> → 연결 (빈 곳에 놓으면 새 상자)</li>
+        <li>손가락으로 상자 끌기 → 이동 · 빈 곳 끌기 → 화면 이동 · 두 손가락 → 확대/축소</li>
+        <li>화살표를 탭 → × 로 연결 삭제</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script src="app.js?v=2"></script>
+</body>
+</html>

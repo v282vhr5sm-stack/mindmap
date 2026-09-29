@@ -1,0 +1,100 @@
+:root {
+  --bg: #f7f5f2; --dot: #dcd5cc; --ink: #2a2622; --card: #fff; --line: #a39a90;
+  --accent: #e0795a; --muted: #8c847b; --border: #e7e1d9;
+}
+html, body {
+  margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard", "Malgun Gothic", sans-serif;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  overscroll-behavior: none; -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; color: inherit; cursor: pointer; }
+
+#stage {
+  position: fixed; inset: 0; overflow: hidden; touch-action: none;
+  background-image: radial-gradient(var(--dot) 1.2px, transparent 1.4px);
+  background-size: 24px 24px;
+}
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+#edges { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+.edge { fill: none; stroke: var(--line); stroke-width: 2.2; stroke-linecap: round; }
+.edge.sel { stroke: var(--accent); }
+.edge.tmp { stroke: var(--accent); stroke-dasharray: 2 7; stroke-width: 2.6; }
+.ehit { fill: none; stroke: transparent; stroke-width: 26; pointer-events: stroke; }
+
+.node {
+  position: absolute; box-sizing: border-box; min-width: 56px; width: max-content;
+  padding: 10px 16px; border-radius: 16px; background: var(--card);
+  border: 1.5px solid var(--border);
+  box-shadow: 0 1px 2px rgba(60, 40, 20, .05), 0 6px 18px rgba(60, 40, 20, .07);
+  font-size: 18px; line-height: 1.45; z-index: 1;
+}
+.node.selected { border-color: var(--accent); z-index: 4; }
+.node.editing { border-color: var(--accent); z-index: 5; box-shadow: 0 0 0 4px rgba(224, 121, 90, .14), 0 8px 24px rgba(60, 40, 20, .1); }
+.txt { position: relative; max-width: 300px; min-height: 1.45em; white-space: pre-wrap; word-break: break-word; outline: none; }
+.node.editing .txt { -webkit-user-select: text; user-select: text; cursor: text; }
+.node.editing:not(.has-ink) .txt:empty::before { content: attr(data-ph); color: #bdb4aa; }
+.node:not(.editing):not(.has-ink) .txt:empty::before { content: "…"; color: #c8c0b6; }
+.ink { position: absolute; left: 0; top: 0; width: 1px; height: 1px; overflow: visible; pointer-events: none; }
+.ink path { fill: none; stroke: var(--ink); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+
+.nb {
+  position: absolute; display: none; align-items: center; justify-content: center;
+  width: 36px; height: 36px; padding: 0; border-radius: 50%; border: 0;
+  font-size: 24px; line-height: 1; box-shadow: 0 2px 8px rgba(60, 40, 20, .15);
+  touch-action: manipulation;
+}
+.nb::after { content: ""; position: absolute; inset: -9px; }
+.node.selected .nb { display: flex; }
+.nb.plus { left: 50%; bottom: -52px; transform: translateX(-50%); background: var(--accent); color: #fff; }
+.nb.minus { right: -52px; top: 50%; transform: translateY(-50%); background: #fff; color: var(--accent); border: 1.5px solid var(--accent); }
+.nb.del { right: -13px; top: -13px; width: 26px; height: 26px; font-size: 17px; background: #fff; color: var(--muted); border: 1px solid var(--border); box-shadow: none; }
+
+.round-btn {
+  position: absolute; width: 30px; height: 30px; margin: -15px 0 0 -15px; border-radius: 50%;
+  border: 1.5px solid var(--accent); background: #fff; color: var(--accent); font-size: 18px; line-height: 1; padding: 0; z-index: 6;
+}
+.round-btn[hidden] { display: none; }
+
+#hint {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  text-align: center; color: var(--muted); font-size: 19px; line-height: 1.7; pointer-events: none;
+}
+#hint span { font-size: 15px; color: #aaa198; }
+#hint[hidden] { display: none; }
+
+.bar {
+  position: fixed; top: calc(env(safe-area-inset-top) + 12px); display: flex; gap: 6px; padding: 5px;
+  background: rgba(255, 255, 255, .88); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 4px 16px rgba(60, 40, 20, .06); z-index: 10;
+}
+.bar.left { left: calc(env(safe-area-inset-left) + 12px); }
+.bar.right { right: calc(env(safe-area-inset-right) + 12px); }
+.bar button {
+  min-width: 42px; height: 42px; padding: 0 10px; border: 0; border-radius: 11px; background: transparent;
+  font-size: 21px; touch-action: manipulation;
+}
+.bar button:active { background: #f1ece6; }
+.bar button:disabled { opacity: .3; }
+.bar button.title { font-size: 16px; font-weight: 600; max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar button.accent { background: var(--accent); color: #fff; }
+
+#drawer { position: fixed; inset: 0; background: rgba(40, 30, 20, .18); z-index: 20; }
+#drawer[hidden] { display: none; }
+.sheet {
+  position: absolute; left: 0; top: 0; bottom: 0; width: min(380px, 88vw); background: #fff; overflow-y: auto;
+  padding: calc(env(safe-area-inset-top) + 16px) 18px 24px calc(env(safe-area-inset-left) + 18px); box-sizing: border-box;
+  box-shadow: 8px 0 30px rgba(40, 30, 20, .12);
+}
+.sheet-head { display: flex; align-items: center; justify-content: space-between; font-size: 19px; margin-bottom: 14px; }
+.sheet-head button { width: 40px; height: 40px; border: 0; background: none; font-size: 26px; color: var(--muted); }
+.new-board { width: 100%; height: 48px; border: 1.5px dashed var(--accent); border-radius: 12px; background: #fffaf7; color: var(--accent); font-size: 16px; font-weight: 600; }
+#boardList { margin: 12px 0 20px; }
+.brow { display: flex; align-items: center; gap: 6px; border-radius: 12px; }
+.brow.cur { background: #f7f1ec; }
+.brow .open { flex: 1; text-align: left; border: 0; background: none; padding: 12px 10px; }
+.brow .open b { display: block; font-size: 16px; font-weight: 600; }
+.brow .open small { color: var(--muted); font-size: 13px; }
+.brow .rm { width: 40px; height: 40px; border: 0; background: none; color: #b8afa5; font-size: 20px; }
+.help { font-size: 14px; color: #6d655d; background: var(--bg); border-radius: 12px; padding: 14px 16px; }
+.help ul { margin: 8px 0 0; padding-left: 18px; line-height: 1.75; }
