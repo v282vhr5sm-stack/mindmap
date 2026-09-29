@@ -124,7 +124,7 @@ function makeNodeEl(n) {
   t.addEventListener('input', () => {
     const m = board.nodes[n.id]; if (!m || editing !== n.id) return;
     m.text = t.innerText.replace(/ /g, ' ');
-    measure(); drawEdges(); save();
+    tidy(); save();
   });
   t.addEventListener('paste', e => {
     if (CE === 'plaintext-only') return;
@@ -140,17 +140,17 @@ function updateNodeEl(n, el) {
   if (isImg) {
     const src = board.images[n.img] || '', pic = el.querySelector('.pic');
     if (n.ar) pic.style.aspectRatio = String(1 / n.ar);
-    if (el._src !== src) { pic.onload = () => { measure(); drawEdges(); }; pic.src = src; el._src = src; }
+    if (el._src !== src) { pic.onload = () => tidy(); pic.src = src; el._src = src; }
   }
   if (el._ink !== n.ink || el._inkN !== n.ink.length) {
     const svg = el.querySelector('.ink'); svg.textContent = '';
     for (const s of n.ink) { const p = document.createElementNS(NS, 'path'); p.setAttribute('d', strokeD(s.p)); svg.appendChild(p); }
     el._ink = n.ink; el._inkN = n.ink.length;
   }
-  const ext = inkExtent(n);
+  const ext = inkExtent(n), pad = isEd && editMode === 'pen';
   el.style.width = isImg ? (n.w || 240) + 'px' : n.w ? n.w + 'px' : '';
-  el.style.minWidth = (isEd ? Math.max(280, ext.w + 110) : Math.max(56, ext.w)) + 'px';
-  el.style.minHeight = (isEd ? Math.max(140, ext.h + 90, n.h || 0) : isImg ? 0 : Math.max(ext.h, n.h || 0)) + 'px';
+  el.style.minWidth = (pad ? Math.max(280, ext.w + 110) : Math.max(56, ext.w)) + 'px';
+  el.style.minHeight = (pad ? Math.max(140, ext.h + 90, n.h || 0) : isImg ? 0 : Math.max(ext.h, n.h || 0)) + 'px';
   el.classList.toggle('is-img', isImg);
   el.classList.toggle('sized', !!n.w && !isImg);
   el.classList.toggle('editing', isEd);
@@ -165,10 +165,16 @@ function render() {
     if (!el) { el = makeNodeEl(n); els.set(n.id, el); nodesLayer.appendChild(el); }
     updateNodeEl(n, el);
   }
-  measure(); drawEdges(); applyView(); updateBar();
+  tidy(); applyView(); updateBar();
   $('#hint').hidden = Object.keys(board.nodes).length > 0;
 }
 function measure() { for (const [id, el] of els) sizes.set(id, { w: el.offsetWidth, h: el.offsetHeight }); }
+// 크기 재고 → 자동 정렬 → 화면 반영 (skip: 지금 끌고 있는 상자는 손가락/펜슬 위치 그대로)
+function tidy(skip) {
+  measure(); layout(skip);
+  for (const [id, el] of els) { const n = board.nodes[id]; if (n) { el.style.left = n.x + 'px'; el.style.top = n.y + 'px'; } }
+  drawEdges();
+}
 
 // ---------- 곡선 화살표 ----------
 // pref: 'v' 위아래로 잇기, 'h' 옆으로 잇기 (없으면 더 많이 떨어진 쪽)
@@ -195,11 +201,13 @@ function curve(a, b, gap = 7, pref) {
   return { d: `M${f(p1[0])} ${f(p1[1])} C${f(c1[0])} ${f(c1[1])} ${f(c2[0])} ${f(c2[1])} ${f(p2[0])} ${f(p2[1])}`, mid };
 }
 function drawEdges() {
+  buildTree();
   edgeGroup.textContent = '';
   let delAt = null;
   for (const e of board.edges) {
     if (!board.nodes[e.from] || !board.nodes[e.to]) continue;
-    const pid = e.from, pref = kidsOf(pid).length > 1 ? (lineDir(e.to, pid) === 'h' ? 'v' : 'h') : undefined;
+    const lay = treePar.get(e.to) === e.from && board.nodes[e.from].lay;
+    const pref = lay ? (lay === 'down' || lay === 'up' ? 'v' : 'h') : undefined;
     const c = curve(rect(e.from), rect(e.to), 7, pref), isSel = sel && sel.type === 'edge' && sel.id === e.id;
     const p = document.createElementNS(NS, 'path');
     p.setAttribute('d', c.d); p.setAttribute('class', 'edge' + (isSel ? ' sel' : ''));
@@ -275,56 +283,88 @@ function addEdge(from, to) {
   if (from === to || board.edges.some(e => (e.from === from && e.to === to) || (e.from === to && e.to === from))) return false;
   board.edges.push({ id: uid(), from, to }); return true;
 }
-// dir: 'h' 오른쪽으로 비켜 놓기, 'v' 아래로 비켜 놓기
-function freeSpot(x, y, w = 130, h = 48, dir = 'h') {
+function freeSpot(x, y, w = 130, h = 48) {
   const hit = (x, y) => Object.keys(board.nodes).some(id => {
     const r = rect(id); return x < r.x + r.w + 16 && x + w + 16 > r.x && y < r.y + r.h + 16 && y + h + 16 > r.y;
   });
-  for (let i = 0; i < 200 && hit(x, y); i++) if (dir === 'v') y += 24; else x += 30;
+  for (let i = 0; i < 200 && hit(x, y); i++) x += 30;
   return [x, y];
 }
-const kidsOf = pid => board.edges.filter(e => e.from === pid && board.nodes[e.to]).map(e => e.to);
-const parentOf = id => board.edges.find(e => e.to === id && board.nodes[e.from])?.from || null;
+
+// ---------- 자동 정렬 ----------
+// 상자로 처음 들어온 화살표의 출발 상자를 '부모'로 보고 나무 모양으로 가지런히 놓음.
+// 부모 없는 상자(뿌리)는 사용자가 둔 자리 그대로. 부모마다 꼬리 방향 lay: down|up(가로 줄) / right|left(세로 줄)
+let treePar = new Map();
 const center = r => [r.x + r.w / 2, r.y + r.h / 2];
-// 같은 줄 방향: 형제끼리 가로로 놓였으면 가로, 세로로 놓였으면 세로
-function lineDir(id, pid) {
-  const r = rect(id), [cx, cy] = center(r);
-  const sibs = pid ? kidsOf(pid).filter(k => k !== id) : [];
-  if (sibs.length) {
-    const near = sibs.map(rect).reduce((a, b) => (Math.hypot(...center(a).map((v, i) => v - [cx, cy][i])) < Math.hypot(...center(b).map((v, i) => v - [cx, cy][i])) ? a : b));
-    const [nx, ny] = center(near);
-    return Math.abs(nx - cx) >= Math.abs(ny - cy) ? 'h' : 'v';
-  }
-  if (pid) { const [px, py] = center(rect(pid)); return Math.abs(cy - py) >= Math.abs(cx - px) ? 'h' : 'v'; }   // 부모 아래 → 가로 줄, 부모 옆 → 세로 줄
-  return board.nodes[id].dir || 'h';
+function buildTree() {
+  treePar = new Map();
+  for (const e of board.edges) if (e.from !== e.to && board.nodes[e.from] && board.nodes[e.to] && !treePar.has(e.to)) treePar.set(e.to, e.from);
+  const kids = new Map();
+  for (const [c, p] of treePar) { if (!kids.has(p)) kids.set(p, []); kids.get(p).push(c); }
+  return kids;
 }
-// id 와 같은 줄의 다음 자리 (가로면 윗선 맞춤, 세로면 왼쪽선 맞춤)
-function nextInLine(id, pid) {
-  const dir = lineDir(id, pid), r = rect(id);
-  const line = [id, ...(pid ? kidsOf(pid) : [])].filter((v, i, a) => a.indexOf(v) === i).map(rect)
-    .filter(o => dir === 'h' ? Math.abs(o.y - r.y) < 40 : Math.abs(o.x - r.x) < 40);
-  let x, y;
-  if (dir === 'h') { const last = line.reduce((a, b) => (b.x + b.w > a.x + a.w ? b : a)); x = last.x + last.w + 30; y = r.y; }
-  else { const last = line.reduce((a, b) => (b.y + b.h > a.y + a.h ? b : a)); x = r.x; y = last.y + last.h + 24; }
-  [x, y] = freeSpot(x, y, 130, 48, dir);
-  return { x, y, dir };
+const kidsOf = pid => buildTree().get(pid) || [];
+const parentOf = id => { buildTree(); return treePar.get(id) || null; };
+function isUnder(id, anc) {
+  buildTree();
+  for (let p = treePar.get(id), i = 0; p && i < 9999; p = treePar.get(p), i++) if (p === anc) return true;
+  return false;
+}
+function layDir(id, kids) {
+  const n = board.nodes[id]; if (n.lay) return n.lay;
+  const [px, py] = center(rect(id)); let sx = 0, sy = 0;
+  for (const k of kids) { const [cx, cy] = center(rect(k)); sx += cx - px; sy += cy - py; }
+  return (n.lay = Math.abs(sy) >= Math.abs(sx) ? (sy >= 0 ? 'down' : 'up') : (sx >= 0 ? 'right' : 'left'));
+}
+function layout(skip) {
+  const kidsMap = buildTree(), off = new Map(), seen = new Set();
+  const lay = id => {
+    seen.add(id);
+    const s = sizes.get(id) || { w: 120, h: 46 }, box = { x0: 0, y0: 0, x1: s.w, y1: s.h };
+    const kids = (kidsMap.get(id) || []).filter(k => !seen.has(k));
+    if (!kids.length) return box;
+    const dir = layDir(id, kids), row = dir === 'down' || dir === 'up';
+    const key = k => {                                         // 줄 안의 순서 = 지금 놓인 위치 순서
+      const n = board.nodes[k]; if (n._last) return Infinity;
+      const ref = n._after && board.nodes[n._after] ? n._after : k, c = center(rect(ref));
+      return (row ? c[0] : c[1]) + (ref !== k ? 0.5 : 0);
+    };
+    kids.sort((a, b) => key(a) - key(b));
+    const subs = kids.map(k => [k, lay(k)]);
+    const G = row ? 28 : 18, D = row ? 64 : 72;                  // 형제 사이 간격, 부모와의 거리
+    const span = b => (row ? b.x1 - b.x0 : b.y1 - b.y0);
+    let c = (row ? s.w : s.h) / 2 - (subs.reduce((t, [, b]) => t + span(b), 0) + G * (subs.length - 1)) / 2;
+    for (const [k, b] of subs) {
+      const ks = sizes.get(k) || { w: 120, h: 46 };             // 줄 안에서 상자끼리 선 맞춤 (가로 줄=윗선, 세로 줄=왼쪽선)
+      const dx = row ? c - b.x0 : dir === 'right' ? s.w + D : -D - ks.w;
+      const dy = row ? (dir === 'down' ? s.h + D : -D - ks.h) : c - b.y0;
+      c += span(b) + G;
+      off.set(k, [dx, dy]);
+      box.x0 = Math.min(box.x0, b.x0 + dx); box.y0 = Math.min(box.y0, b.y0 + dy);
+      box.x1 = Math.max(box.x1, b.x1 + dx); box.y1 = Math.max(box.y1, b.y1 + dy);
+    }
+    return box;
+  };
+  const place = id => {
+    for (const k of kidsMap.get(id) || []) {
+      const o = off.get(k); if (!o) continue;
+      const p = board.nodes[id], n = board.nodes[k];
+      if (k !== skip) { n.x = r1(p.x + o[0]); n.y = r1(p.y + o[1]); }
+      place(k);
+    }
+  };
+  for (const id of Object.keys(board.nodes)) if (!treePar.has(id)) { lay(id); place(id); }
+  for (const n of Object.values(board.nodes)) { delete n._after; delete n._last; }
 }
 function addChild(pid) {
-  const kids = kidsOf(pid);
-  let x, y;
-  if (kids.length) {                                          // 이미 꼬리가 있으면 그 줄에 이어서
-    const last = kids[kids.length - 1];
-    ({ x, y } = nextInLine(last, pid));
-  } else {
-    const p = rect(pid); [x, y] = freeSpot(p.x + p.w / 2 - 60, p.y + p.h + 76);
-  }
-  const n = createNode(x, y); addEdge(pid, n.id); return n;
+  const p = rect(pid), n = createNode(p.x, p.y + p.h + 64);
+  if (!kidsOf(pid).length && !board.nodes[pid].lay) board.nodes[pid].lay = 'down';
+  n._last = true; addEdge(pid, n.id); return n;
 }
 function addSibling(id) {
-  const pid = parentOf(id), { x, y, dir } = nextInLine(id, pid);
-  const n = createNode(x, y);
-  if (pid) addEdge(pid, n.id); else n.dir = board.nodes[id].dir = dir;
-  return n;
+  const pid = parentOf(id), r = rect(id);
+  if (!pid) { const [x, y] = freeSpot(r.x + r.w + 40, r.y); return createNode(x, y); }
+  const n = createNode(r.x, r.y); n._after = id; addEdge(pid, n.id); return n;
 }
 // 상자 버튼 (+ / − / ×)
 function doAct(act, id, mode) {
@@ -366,10 +406,19 @@ let pinch = null;
 let lastTap = null;
 let dropEl = null;
 const touchList = () => [...ptrs.values()].filter(p => p.type === 'touch');
-const nodeAt = (x, y, except) => {
+const nodeAt = (x, y, except) => {  // 손/펜 아래 상자
   const id = document.elementFromPoint(x, y)?.closest('.node')?.dataset.id;
   return id && id !== except && board.nodes[id] ? id : null;
 };
+function nearNode(cx, cy, except, px = 40) {
+  const w = toWorld(cx, cy); let best = null, bd = px / board.view.z;
+  for (const id of Object.keys(board.nodes)) {
+    if (id === except) continue;
+    const r = rect(id), d = Math.hypot(Math.max(r.x - w.x, 0, w.x - r.x - r.w), Math.max(r.y - w.y, 0, w.y - r.y - r.h));
+    if (d <= bd) { bd = d; best = id; }
+  }
+  return best;
+}
 function setDrop(id) {
   const el = id ? els.get(id) : null;
   if (dropEl === el) return;
@@ -381,8 +430,7 @@ function cancelGesture() {
   if (!g) return;
   const cur = g; g = null;
   if (cur.kind === 'ink') { cur.path.remove(); undoStack.pop(); updateBar(); }
-  clearTimeout(cur.timer); els.get(cur.id)?.classList.remove('lift');
-  if (cur.kind === 'node' && cur.moved && !cur.connect) { const n = board.nodes[cur.id]; if (n) { n.x = cur.ox; n.y = cur.oy; } els.get(cur.id)?.classList.remove('dragging'); render(); }
+  if (cur.kind === 'node' && cur.moved) { const n = board.nodes[cur.id]; if (n) { n.x = cur.ox; n.y = cur.oy; } els.get(cur.id)?.classList.remove('dragging'); render(); }
   tmpEdge.setAttribute('d', ''); setDrop(null);
 }
 function startPinch() {
@@ -426,14 +474,10 @@ stage.addEventListener('pointerdown', e => {
     const s = sizes.get(nid), n = board.nodes[nid];
     g = { ...base, kind: 'resize', id: nid, h: rz.dataset.h, x0: n.x, y0: n.y, w0: s.w, h0: s.h, ink0: n.ink };
   } else if (nid && board.nodes[nid]) {
-    g = { ...base, kind: 'node', id: nid, ox: board.nodes[nid].x, oy: board.nodes[nid].y };
-    if (pen) {                                              // 펜슬: 바로 끌면 선 긋기(연결), 꾹 누른 뒤 끌면 이동
-      const cur = g;
-      cur.timer = setTimeout(() => { if (g === cur && !cur.moved) { cur.hold = true; els.get(nid)?.classList.add('lift'); } }, 380);
-    }
+    g = { ...base, kind: 'node', id: nid, ox: board.nodes[nid].x, oy: board.nodes[nid].y };   // 닫힌 상자를 끌면 이동
   }
   else if (edgeId) g = { ...base, kind: 'edge', id: edgeId, vx: board.view.x, vy: board.view.y };
-  else g = { ...base, kind: 'empty', vx: board.view.x, vy: board.view.y };
+  else g = { ...base, kind: 'empty', vx: board.view.x, vy: board.view.y, near: pen ? nearNode(e.clientX, e.clientY) : null };
   if (nb || rz) e.preventDefault();
   try { stage.setPointerCapture(e.pointerId); } catch {}
 });
@@ -443,6 +487,7 @@ function startInk(e, id) {
   const path = document.createElementNS(NS, 'path');
   els.get(id).querySelector('.ink').appendChild(path);
   g = { kind: 'ink', id, pen: true, pid: e.pointerId, pts: [], path };
+  editMode = 'pen';
   try { stage.setPointerCapture(e.pointerId); } catch {}
   addInkPoint(e);
 }
@@ -461,25 +506,33 @@ window.addEventListener('pointermove', e => {
   const dx = e.clientX - g.sx, dy = e.clientY - g.sy, z = board.view.z;
   if (!g.moved && Math.hypot(dx, dy) > (g.pen ? 6 : 9)) {
     g.moved = true;
-    clearTimeout(g.timer);
-    if (g.kind === 'node' && g.pen && !g.hold) g.connect = true;
-    if ((g.kind === 'node' && !g.connect) || g.kind === 'resize') pushUndo();
-    if (g.kind === 'node' && !g.connect) els.get(g.id).classList.add('dragging');
+    if (g.kind === 'empty' && g.near) g.connect = true;          // 상자 바로 옆에서 펜슬로 선 긋기 → 연결
+    if (g.kind === 'node' || g.kind === 'resize') pushUndo();
+    if (g.kind === 'node') {
+      els.get(g.id).classList.add('dragging');
+      const n0 = board.nodes[g.id];                          // 딸린 상자들은 같은 간격으로 따라오게
+      g.desc = Object.values(board.nodes).filter(m => isUnder(m.id, g.id)).map(m => [m.id, m.x - n0.x, m.y - n0.y]);
+    }
   }
   if (!g.moved) return;
   if (g.kind === 'btn' || g.connect) {                       // + 를 끌거나 펜슬로 상자에서 선을 그으면 연결
     if (g.kind === 'btn' && g.act !== 'child') return;
-    const w = toWorld(e.clientX, e.clientY);
-    tmpEdge.setAttribute('d', curve(rect(g.id), { x: w.x, y: w.y, w: 0, h: 0 }, 0).d);
-    setDrop(nodeAt(e.clientX, e.clientY, g.id));
+    const src = g.kind === 'btn' ? g.id : g.near, w = toWorld(e.clientX, e.clientY);
+    tmpEdge.setAttribute('d', curve(rect(src), { x: w.x, y: w.y, w: 0, h: 0 }, 0).d);
+    setDrop(nodeAt(e.clientX, e.clientY, src) || nearNode(e.clientX, e.clientY, src, 24));
   } else if (g.kind === 'resize') {
     resizeTo(board.nodes[g.id], g, dx / z, dy / z);
-    updateNodeEl(board.nodes[g.id], els.get(g.id)); measure(); drawEdges();
+    updateNodeEl(board.nodes[g.id], els.get(g.id)); tidy();
   } else if (g.kind === 'node') {                            // 상자 이동 (다른 상자 위에 놓으면 연결)
     const n = board.nodes[g.id]; n.x = r1(g.ox + dx / z); n.y = r1(g.oy + dy / z);
-    const el = els.get(g.id); el.style.left = n.x + 'px'; el.style.top = n.y + 'px';
-    drawEdges();
-    setDrop(nodeAt(e.clientX, e.clientY, g.id));
+    let t = nodeAt(e.clientX, e.clientY, g.id);
+    if (t && isUnder(t, g.id)) t = null;
+    setDrop(t);
+    if (t) {                                                 // 다른 상자 위: 줄은 그대로 두고 붙일 준비
+      for (const [id, ox, oy] of g.desc) { const m = board.nodes[id]; m.x = n.x + ox; m.y = n.y + oy; }
+      for (const id of [g.id, ...g.desc.map(d => d[0])]) { const el = els.get(id), m = board.nodes[id]; el.style.left = m.x + 'px'; el.style.top = m.y + 'px'; }
+      drawEdges();
+    } else tidy(g.id);                                       // 빈 곳: 같은 줄 상자들이 비켜주며 순서 바뀜
   } else {
     board.view.x = g.vx + dx; board.view.y = g.vy + dy; applyView();
   }
@@ -501,15 +554,17 @@ function endPointer(e, cancelled) {
     else { cur.path.remove(); undoStack.pop(); updateBar(); }
     return;
   }
-  if (cur.kind === 'btn') {
-    if (!cur.moved) { doAct(cur.act, cur.id, mode); return; }
-    if (cur.act !== 'child') return;
+  if (cur.kind === 'btn' && !cur.moved) { doAct(cur.act, cur.id, mode); return; }
+  if ((cur.kind === 'btn' && cur.act === 'child') || cur.connect) {   // 선 긋기 → 연결 (빈 곳에서 끝내면 새 상자)
+    const src = cur.kind === 'btn' ? cur.id : cur.near;
     if (editing) finishEdit({ keepEmpty: true });
+    if (!board.nodes[src]) return;
     pushUndo();
-    if (target) { if (!addEdge(cur.id, target)) undoStack.pop(); sel = { type: 'node', id: target }; render(); save(); }
-    else { const w = toWorld(e.clientX, e.clientY), n = createNode(w.x - 20, w.y - 22); addEdge(cur.id, n.id); render(); startEdit(n.id, mode); save(); }
+    if (target) { if (!addEdge(src, target)) undoStack.pop(); sel = { type: 'node', id: target }; render(); save(); }
+    else { const w = toWorld(e.clientX, e.clientY), n = createNode(w.x - 20, w.y - 22); addEdge(src, n.id); render(); startEdit(n.id, mode); save(); }
     return;
   }
+  if (cur.kind === 'btn') return;
   if (cur.kind === 'resize') {
     if (!cur.moved) {                                        // 크기 점을 탭하면 자동 크기로
       const n = board.nodes[cur.id];
@@ -519,20 +574,15 @@ function endPointer(e, cancelled) {
     render(); save(); return;
   }
   if (cur.kind === 'node') {
-    clearTimeout(cur.timer);
-    els.get(cur.id)?.classList.remove('dragging', 'lift');
-    if (cur.connect) {                                       // 펜슬로 그은 선 → 연결 (빈 곳이면 새 상자)
-      pushUndo();
-      if (target) { if (!addEdge(cur.id, target)) undoStack.pop(); sel = { type: 'node', id: target }; render(); save(); }
-      else { const w = toWorld(e.clientX, e.clientY), n = createNode(w.x - 20, w.y - 22); addEdge(cur.id, n.id); render(); startEdit(n.id, 'pen'); save(); }
-      return;
-    }
+    els.get(cur.id)?.classList.remove('dragging');
     if (cur.moved) {
-      if (target) {                                          // 다른 상자 위에 놓음 → 그 상자에서 꼬리 잇기, 제자리로
-        const n = board.nodes[cur.id]; n.x = cur.ox; n.y = cur.oy;
-        addEdge(target, cur.id); sel = { type: 'node', id: cur.id };
-      }
-      render(); save(); return;
+      const old = parentOf(cur.id);
+      if (target && target !== old) {                        // 다른 상자 위에 놓음 → 그 상자의 꼬리로 옮김
+        board.edges = board.edges.filter(x => !(x.to === cur.id && x.from === old) && !(x.from === cur.id && x.to === target) && !(x.to === cur.id && x.from === target));
+        if (!kidsOf(target).length && !board.nodes[target].lay) board.nodes[target].lay = 'down';
+        addEdge(target, cur.id); board.nodes[cur.id]._last = true;
+      } else if (!target && old && kidsOf(old).length === 1) delete board.nodes[old].lay;   // 꼬리가 하나면 놓은 쪽으로 방향 바꿈
+      sel = { type: 'node', id: cur.id }; render(); save(); return;
     }
     startEdit(cur.id, mode);                                 // 탭 → 편집 (손가락: 키보드, 펜슬: 손글씨)
     return;
@@ -540,14 +590,13 @@ function endPointer(e, cancelled) {
   if (cur.moved) { save(); return; }
   if (cur.kind === 'edge') { if (editing) finishEdit(); sel = { type: 'edge', id: cur.id }; render(); return; }
 
-  // 빈 곳 탭: 쓰던 게 있으면 끝내기, 없으면 새 상자
+  // 빈 곳: 한 번 탭 = 쓰기 끝·선택 해제, 두 번 탭 = 새 상자
   const now = Date.now();
-  const dbl = lastTap && now - lastTap.t < 400 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
-  const busy = cur.wasEditing;                               // 쓰는 중이었으면 끝내기만
+  const dbl = lastTap && now - lastTap.t < 500 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 50;
   lastTap = { t: now, x: e.clientX, y: e.clientY };
   if (editing) finishEdit();
   if (sel) { sel = null; render(); }
-  if (busy && !dbl) return;
+  if (!dbl) return;
   lastTap = null;
   pushUndo();
   const w = toWorld(e.clientX, e.clientY), n = createNode(w.x - 60, w.y - 24);
